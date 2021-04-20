@@ -16,11 +16,53 @@ object main{
   Logger.getLogger("org.apache.spark").setLevel(Level.WARN)
   Logger.getLogger("org.spark-project").setLevel(Level.WARN)
 
-  /*def LubyMIS(g_in: Graph[Int, Int]): Graph[Int, Int] = {
-    while (remaining_vertices >= 1) {
-        // To Implement
-    }
-  }*/
+  def LubyMIS(g_in: Graph[Int, Int]): Graph[Int, Int] = {
+    var g = g_in
+    var remaining_vertices = 2 // kick off the while loop
+    val r = scala.util.Random
+
+    g.vertices.foreach(println)                // 
+    val g_out = g.mapVertices((id, attr) => 0) // this is given implicitly by g_in
+    g_out.vertices.foreach(println)            //
+
+
+   // while (remaining_vertices >= 1) {
+      //todo: set newgraph to subset of g_out but only 0s 
+    
+      // assign random values to all vertices
+      val newGraph: Graph[Float, Int] = g.mapVertices((id, attr) => r.nextFloat)
+      newGraph.vertices.foreach(println)
+
+      // send values to neighbors, we only care about the largest value so we can compare to newGraph's random vals
+      val msg: VertexRDD[Float] = newGraph.aggregateMessages[Float](//random values will be floats
+        triplet => {
+          triplet.sendToDst(triplet.srcAttr)
+          triplet.sendToSrc(triplet.dstAttr)
+        }, (a, b) => {
+          if (a > b) a else b
+        }
+      )
+
+
+      
+      println("\nFirst round of message sending:")
+      msg.foreach(println)
+
+      println("\nJoin")
+      val joinedGraph: Graph[Float, Int] = newGraph.joinVertices(msg) { (_, oldAttr, newAttr) =>
+        if (newAttr < oldAttr) 1 else 0 } 
+          
+         
+      joinedGraph.vertices.foreach(println)
+     
+
+
+    //remaining_vertices = g_out.vertices.filter { case (id, attr) => attr == 0 }.count // how many are active? ie 0
+    //}
+    
+
+    return g
+  }
 
 
   def verifyMIS(g_in: Graph[Int, Int]): Boolean = {
@@ -78,7 +120,7 @@ object main{
       val startTimeMillis = System.currentTimeMillis()
       val edges = sc.textFile(args(1)).map(line => {val x = line.split(","); Edge(x(0).toLong, x(1).toLong , 1)} )
       val g = Graph.fromEdges[Int, Int](edges, 0, edgeStorageLevel = StorageLevel.MEMORY_AND_DISK, vertexStorageLevel = StorageLevel.MEMORY_AND_DISK)
-      //val g2 = LubyMIS(g)
+      val g2 = LubyMIS(g)
 
       val endTimeMillis = System.currentTimeMillis()
       val durationSeconds = (endTimeMillis - startTimeMillis) / 1000
@@ -86,8 +128,8 @@ object main{
       println("Luby's algorithm completed in " + durationSeconds + "s.")
       println("==================================")
 
-//      val g2df = spark.createDataFrame(g2.vertices)
- //     g2df.coalesce(1).write.format("csv").mode("overwrite").save(args(2))
+      val g2df = spark.createDataFrame(g2.vertices)
+      g2df.coalesce(1).write.format("csv").mode("overwrite").save(args(2))
     }
     else if(args(0)=="verify") {
       if(args.length != 3) {
