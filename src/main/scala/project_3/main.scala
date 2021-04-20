@@ -16,15 +16,46 @@ object main{
   Logger.getLogger("org.apache.spark").setLevel(Level.WARN)
   Logger.getLogger("org.spark-project").setLevel(Level.WARN)
 
-  def LubyMIS(g_in: Graph[Int, Int]): Graph[Int, Int] = {
+  /*def LubyMIS(g_in: Graph[Int, Int]): Graph[Int, Int] = {
     while (remaining_vertices >= 1) {
         // To Implement
     }
-  }
+  }*/
 
 
   def verifyMIS(g_in: Graph[Int, Int]): Boolean = {
-    // To Implement
+    var g = g_in
+
+    // check for independence -- make sure for all +1's that neighbors are <1
+    val independence_vertices = g.aggregateMessages[Int](
+      triplet => { 
+        triplet.sendToDst(triplet.srcAttr)
+        triplet.sendToSrc(triplet.dstAttr)
+        
+        // fix overcounting
+        if(triplet.srcAttr == -1) { triplet.sendToSrc(-1) } 
+        if(triplet.dstAttr == -1) { triplet.sendToDst(-1) }
+      }, (a, b) => (a + b))
+
+    // if a vertex with +1 recieved a +1 message, this is not a MIS
+    if (independence_vertices.filter { case (a, b) => b > 0 }.count > 0) {
+      return false
+    }
+
+    // check for maximallity
+    val maximality_vertices = g.aggregateMessages[Int](
+      triplet => {
+        if(triplet.srcAttr == 1) { triplet.sendToDst(1)
+        } else { triplet.sendToDst(0) }
+        if(triplet.dstAttr == 1) { triplet.sendToSrc(1)
+        } else { triplet.sendToSrc(0) }
+      }, (a, b) => (a + b))
+
+    if (maximality_vertices.filter { case (a, b) => b < 0 }.count > 0) {
+      return false
+    }
+
+    return true
   }
 
 
@@ -47,7 +78,7 @@ object main{
       val startTimeMillis = System.currentTimeMillis()
       val edges = sc.textFile(args(1)).map(line => {val x = line.split(","); Edge(x(0).toLong, x(1).toLong , 1)} )
       val g = Graph.fromEdges[Int, Int](edges, 0, edgeStorageLevel = StorageLevel.MEMORY_AND_DISK, vertexStorageLevel = StorageLevel.MEMORY_AND_DISK)
-      val g2 = LubyMIS(g)
+      //val g2 = LubyMIS(g)
 
       val endTimeMillis = System.currentTimeMillis()
       val durationSeconds = (endTimeMillis - startTimeMillis) / 1000
@@ -55,8 +86,8 @@ object main{
       println("Luby's algorithm completed in " + durationSeconds + "s.")
       println("==================================")
 
-      val g2df = spark.createDataFrame(g2.vertices)
-      g2df.coalesce(1).write.format("csv").mode("overwrite").save(args(2))
+//      val g2df = spark.createDataFrame(g2.vertices)
+ //     g2df.coalesce(1).write.format("csv").mode("overwrite").save(args(2))
     }
     else if(args(0)=="verify") {
       if(args.length != 3) {
