@@ -20,45 +20,57 @@ object main{
     var g = g_in
     var remaining_vertices = 2 // kick off the while loop
     val r = scala.util.Random
+    var iterCount = 0
 
-    g.vertices.foreach(println)                // 
-    val g_out = g.mapVertices((id, attr) => 0) // this is given implicitly by g_in
-    g_out.vertices.foreach(println)            //
-
-
-   // while (remaining_vertices >= 1) {
-      //todo: set newgraph to subset of g_out but only 0s 
+    while (remaining_vertices >= 1) {
     
-      // assign random values to all vertices
-      val newGraph: Graph[Float, Int] = g.mapVertices((id, attr) => r.nextFloat)
-      newGraph.vertices.foreach(println)
+      // assign random values to all vertices that are active
+      val newGraph: Graph[Float, Int] = g.mapVertices((id, attr) => if (attr == 0) r.nextFloat else attr )
 
       // send values to neighbors, we only care about the largest value so we can compare to newGraph's random vals
       val msg: VertexRDD[Float] = newGraph.aggregateMessages[Float](//random values will be floats
         triplet => {
-          triplet.sendToDst(triplet.srcAttr)
-          triplet.sendToSrc(triplet.dstAttr)
+          if (triplet.srcAttr != 0) {
+            triplet.sendToDst(triplet.srcAttr)
+          } else { triplet.sendToSrc(triplet.srcAttr)}
+          if (triplet.dstAttr != 0) {
+            triplet.sendToSrc(triplet.dstAttr)
+          } else { triplet.sendToDst(triplet.dstAttr)}
         }, (a, b) => {
           if (a > b) a else b
         }
       )
 
-
       
-      println("\nFirst round of message sending:")
-      msg.foreach(println)
-
-      println("\nJoin")
+      //  if bv (oldAttr) > bx for every neighbor (newAttr is max of these anyways) add to MIS (+1)
       val joinedGraph: Graph[Float, Int] = newGraph.joinVertices(msg) { (_, oldAttr, newAttr) =>
         if (newAttr < oldAttr) 1 else 0 } 
-          
-         
-      joinedGraph.vertices.foreach(println)
-     
+
+       
+      // send message if added to MIS (ie is a +1)
+      val msg2: VertexRDD[Float] = joinedGraph.aggregateMessages[Float](
+        triplet => {
+          if (triplet.srcAttr == 1) { triplet.sendToDst(-1); triplet.sendToSrc(1)
+          } else { triplet.sendToDst(0) }
+          if (triplet.dstAttr == 1) { triplet.sendToSrc(-1); triplet.sendToDst(1)
+          } else { triplet.sendToSrc(0) }
+        }, (a, b) => (a + b))
 
 
-    //remaining_vertices = g_out.vertices.filter { case (id, attr) => attr == 0 }.count // how many are active? ie 0
-    //}
+      // adjust so all positives return to +1 and negatives return to -1 
+      val joinedGraph2: Graph[Float, Int] = joinedGraph.joinVertices(msg2) { (_, oldAttr, newAttr) =>
+        if (newAttr != 0) newAttr/(newAttr.abs) else 0
+      }
+
+      // typecast and find remaining 0's
+      remaining_vertices = joinedGraph2.vertices.filter { case (id, attr) => attr == 0 }.count.asInstanceOf[Int]
+      println("Remaining vertices:" + remaining_vertices)
+      val typecastedGraph: Graph[Int, Int] = joinedGraph2.mapVertices((id, attr) => attr.asInstanceOf[Int])
+
+      iterCount = iterCount + 1
+      g = typecastedGraph
+    }
+    println("Construction finished with " + iterCount + " iterations")
     
 
     return g
@@ -121,6 +133,12 @@ object main{
       val edges = sc.textFile(args(1)).map(line => {val x = line.split(","); Edge(x(0).toLong, x(1).toLong , 1)} )
       val g = Graph.fromEdges[Int, Int](edges, 0, edgeStorageLevel = StorageLevel.MEMORY_AND_DISK, vertexStorageLevel = StorageLevel.MEMORY_AND_DISK)
       val g2 = LubyMIS(g)
+      // verify after constructing
+      val isMIS = verifyMIS(g)
+      if(isMIS)
+        println("Passed verifyMIS() check")
+      else
+        println("Did not pass verifyMIS() check")
 
       val endTimeMillis = System.currentTimeMillis()
       val durationSeconds = (endTimeMillis - startTimeMillis) / 1000
@@ -137,7 +155,7 @@ object main{
         sys.exit(1)
       }
 
-      val edges = sc.textFile(args(1)).map(line => {val x = line.split(","); Edge(x(0).toLong, x(1).toLong , 1)} )
+      val edges = sc.textFile(args(1)).map(line => {val x = line.split(","); Edge(x(0).toLong, x(1).toLong , 1)} ).filter({case Edge(a,b,c)=>a!=b})
       val vertices = sc.textFile(args(2)).map(line => {val x = line.split(","); (x(0).toLong, x(1).toInt) })
       val g = Graph[Int, Int](vertices, edges, edgeStorageLevel = StorageLevel.MEMORY_AND_DISK, vertexStorageLevel = StorageLevel.MEMORY_AND_DISK)
 
